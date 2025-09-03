@@ -34,16 +34,16 @@ endif
 
 # find best GCC and Clang
 ifndef BEST_GCC
-BEST_GCC := $(shell for s in -15 -14 -13 ""; do if gcc$$s --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo gcc$$s; return; fi; done; echo false)
+BEST_GCC := $(shell for s in -15 -14 -13 ""; do if gcc$$s --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo gcc$$s; exit; fi; done; echo false)
 endif
 ifndef BEST_GXX
-BEST_GXX := $(shell for s in -15 -14 -13 ""; do if g++$$s --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo g++$$s; return; fi; done; echo false)
+BEST_GXX := $(shell for s in -15 -14 -13 ""; do if g++$$s --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo g++$$s; exit; fi; done; echo false)
 endif
 ifndef BEST_CLANG
-BEST_CLANG := $(shell for s in -21 -20 -19 -18 ""; do if clang$$s --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo clang$$s; return; fi; done; echo false)
+BEST_CLANG := $(shell for s in -21 -20 -19 -18 ""; do if clang$$s --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo clang$$s; exit; fi; done; echo false)
 endif
 ifndef BEST_CLANGXX
-BEST_CLANGXX := $(shell for s in -21 -20 -19 -18 ""; do if clang++$$s --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo clang++$$s; return; fi; done; echo false)
+BEST_CLANGXX := $(shell for s in -21 -20 -19 -18 ""; do if clang++$$s --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo clang++$$s; exit; fi; done; echo false)
 endif
 
 # compiler variant
