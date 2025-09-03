@@ -1,6 +1,6 @@
 # compiler flags
-CFLAGS := -std=gnu2x -Wall -Wextra -Wshadow -g $(DEFS) $(CFLAGS)
-CXXFLAGS := -std=gnu++2a -Wall -Wextra -Wshadow -g $(DEFS) $(CXXFLAGS)
+CFLAGS := -std=gnu2x -Wall -Wextra -Wshadow -Wvla -g $(DEFS) $(CFLAGS)
+CXXFLAGS := -std=gnu++2a -Wall -Wextra -Wshadow -Wvla -g $(DEFS) $(CXXFLAGS)
 
 O ?= -O3
 ifeq ($(filter 0 1 2 3 s z g fast,$(O)),$(strip $(O)))
@@ -19,92 +19,99 @@ ifeq ($(PIE),0)
 LDFLAGS += -no-pie
 endif
 
-# compiler variant
-ifeq ($(COMPILER),clang)
- ifeq ($(origin CC),default)
-  ifeq ($(shell if clang --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo 1; else echo 0; fi),1)
-CC = clang
-  endif
- endif
- ifeq ($(origin CXX),default)
-  ifeq ($(shell if clang++ --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo 1; else echo 0; fi),1)
-CXX = clang++
-  endif
- endif
+STATIC ?= 0
+ifeq ($(STATIC),1)
+LDFLAGS += -static
 endif
-ifeq ($(COMPILER),gcc)
- ifeq ($(origin CC),default)
-  ifeq ($(shell if gcc --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo 1; else echo 0; fi),1)
-CC = gcc
-  endif
- endif
- ifeq ($(origin CXX),default)
-  ifeq ($(shell if g++ --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo 1; else echo 0; fi),1)
-CXX = g++
-  endif
+
+# maybe skip x86 versions in ARM Docker
+X86 ?= 1
+ifneq ($(X86),1)
+ ifneq ($(findstring /usr/x86_64-linux-gnu/bin:,$(PATH)),)
+PATH := $(subst /usr/x86_64-linux-gnu/bin:,,$(PATH))
  endif
 endif
 
-ISCLANG := $(shell if $(CC) --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo 1; else echo 0; fi)
+# find best GCC and Clang
+ifndef BEST_GCC
+BEST_GCC := $(shell for s in -15 -14 -13 ""; do if gcc$$s --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo gcc$$s; return; fi; done; echo false)
+endif
+ifndef BEST_GXX
+BEST_GXX := $(shell for s in -15 -14 -13 ""; do if g++$$s --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo g++$$s; return; fi; done; echo false)
+endif
+ifndef BEST_CLANG
+BEST_CLANG := $(shell for s in -21 -20 -19 -18 ""; do if clang$$s --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo clang$$s; return; fi; done; echo false)
+endif
+ifndef BEST_CLANGXX
+BEST_CLANGXX := $(shell for s in -21 -20 -19 -18 ""; do if clang++$$s --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo clang++$$s; return; fi; done; echo false)
+endif
+
+# compiler variant
+ifeq ($(origin CC),default)
+ ifeq ($(COMPILER),clang)
+CC = $(BEST_CLANG)
+ else
+CC = $(BEST_GCC)
+ endif
+endif
+ifeq ($(origin CXX),default)
+ ifeq ($(COMPILER),clang)
+CXX = $(BEST_CLANGXX)
+ else
+CXX = $(BEST_GXX)
+ endif
+endif
+
+ISCLANG := $(shell if $(CXX) --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo 1; else echo 0; fi)
 ifeq ($(ISCLANG),1)
 BADCXXFLAGS ?= -fno-if-conversion -fno-if-conversion2
 endif
 
-ifeq ($(NEED_CXX_GCC),1)
-GXX_ISCLANG := $(shell if g++ --version 2>/dev/null | grep -e 'LLVM\|clang' >/dev/null; then echo 1; else echo 0; fi)
- ifeq ($(GXX_ISCLANG),1)
-  ifeq ($(shell if g++-11 --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo 1; else echo 0; fi),1)
-CXX_GCC = g++-11
-  else ifeq ($(shell if g++-10 --version 2>/dev/null | grep -e 'Free Software' >/dev/null; then echo 1; else echo 0; fi),1)
-CXX_GCC = g++-10
-  else
-CXX_GCC = false
-  endif
- else
-CXX_GCC = g++
- endif
-endif
-
-# sanitizer arguments
+# sanitizer arguments; sanitizer defaults to on
 ifndef SAN
-SAN := $(SANITIZE)
-endif
-ifeq ($(SAN),1)
- ifndef ASAN
-ASAN := $(if $(strip $(shell $(CC) -v 2>&1 | grep 'build=aarch.*target=x86')),,1)
- endif
+SAN := $(or $(SANITIZE),$(ASAN),$(UBSAN),1)
 endif
 ifndef TSAN
- ifeq ($(WANT_TSAN),1)
+ ifneq ($(and $(filter-out 0,$(WANT_TSAN)),$(filter 0,$(or $(ASAN),0))),)
 TSAN := $(SAN)
+ endif
+endif
+ifndef ASAN
+ ifeq ($(filter-out 0,$(or $(TSAN),0)),)
+ASAN := $(if $(strip $(shell $(CC) -v 2>&1 | grep 'build=aarch.*target=x86')),0,1)
  endif
 endif
 
 check_for_sanitizer = $(if $(strip $(shell $(CC) -fsanitize=$(1) -x c -E /dev/null 2>&1 | grep sanitize=)),$(info ** WARNING: The `$(CC)` compiler does not support `-fsanitize=$(1)`.),1)
+SANFLAGS :=
+ifneq ($(and $(filter-out 0,$(TSAN)),$(filter-out 0,$(ASAN))),)
+$(error "ASAN=1 conflicts with TSAN=1, pick one or the other")
+endif
 ifeq ($(TSAN),1)
  ifeq ($(call check_for_sanitizer,thread),1)
-CFLAGS += -fsanitize=thread
-CXXFLAGS += -fsanitize=thread
+SANFLAGS += -fsanitize=thread
  endif
 else
  ifeq ($(or $(ASAN),$(LSAN),$(LEAKSAN)),1)
   ifeq ($(call check_for_sanitizer,address),1)
-CFLAGS += -fsanitize=address
-CXXFLAGS += -fsanitize=address
+SANFLAGS += -fsanitize=address
   endif
  endif
  ifeq ($(or $(LSAN),$(LEAKSAN)),1)
   ifeq ($(call check_for_sanitizer,leak),1)
-CFLAGS += -fsanitize=leak
-CXXFLAGS += -fsanitize=leak
+SANFLAGS += -fsanitize=leak
   endif
  endif
 endif
-ifeq ($(or $(UBSAN),$(SAN)),1)
+ifeq ($(or $(UBSAN),1),1)
  ifeq ($(call check_for_sanitizer,undefined),1)
-CFLAGS += -fsanitize=undefined -fno-sanitize-recover=undefined
-CXXFLAGS += -fsanitize=undefined -fno-sanitize-recover=undefined
+SANFLAGS += -fsanitize=undefined -fno-sanitize-recover=undefined
  endif
+endif
+ifeq ($(or $(TSAN),$(LSAN),$(LEAKSAN),$(SAN)),1)
+CPPFLAGS += -DSAN=1
+CFLAGS += $(SANFLAGS)
+CXXFLAGS += $(SANFLAGS)
 endif
 
 # profiling
@@ -130,11 +137,11 @@ include $(DEPFILES)
 endif
 
 # when the C compiler or optimization flags change, rebuild all objects
-ifneq ($(strip $(DEP_CC)),$(strip $(CC) $(CPPFLAGS) $(CFLAGS) $(O)))
-DEP_CC := $(shell mkdir -p $(DEPSDIR); echo >$(BUILDSTAMP); echo "DEP_CC:=$(CC) $(CPPFLAGS) $(CFLAGS) $(O)" >$(DEPSDIR)/_cc.d)
+ifneq ($(strip $(DEP_CC)),$(strip $(CC) $(CPPFLAGS) $(CFLAGS) $(O) X86=$(X86)))
+DEP_CC := $(shell mkdir -p $(DEPSDIR); echo >$(BUILDSTAMP); echo "DEP_CC:=$(CC) $(CPPFLAGS) $(CFLAGS) $(O) X86=$(X86)" >$(DEPSDIR)/_cc.d)
 endif
-ifneq ($(strip $(DEP_CXX)),$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(O) $(LDFLAGS)))
-DEP_CXX := $(shell mkdir -p $(DEPSDIR); echo >$(BUILDSTAMP); echo "DEP_CXX:=$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(O) $(LDFLAGS)" >$(DEPSDIR)/_cxx.d)
+ifneq ($(strip $(DEP_CXX)),$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(O) X86=$(X86) $(LDFLAGS)))
+DEP_CXX := $(shell mkdir -p $(DEPSDIR); echo >$(BUILDSTAMP); echo "DEP_CXX:=$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(O) X86=$(X86) $(LDFLAGS)" >$(DEPSDIR)/_cxx.d)
 endif
 
 
@@ -148,10 +155,11 @@ xrun = $(if $(2),/bin/echo "  $(2) $(3)" &&,) $(1) $(3)
 endif
 runquiet = @$(1) $(3)
 
+CXX_LINK_PREREQUISITES = $(CXX) $(CXXFLAGS) $(LDFLAGS) $(O) -o $@ $^
 
 CLEANASM = 1
 ifeq ($(CLEANASM),1)
-cleanasm = perl -ni -e '$$badsection = !!/\.note\.gnu/ if /^\s+\.section/; print if !/^(?:\# BB|\s+\.cfi|\s+\.p2align|\.LF[BE]|\s+\# =>This|\s+\# kill)/ && !$$badsection' $(1)
+cleanasm = perl -ni -e '$$badsection = !!/\.note\.gnu/ if /^\s+\.section/; print if !/^(?:\# BB|\s+\.cfi|\s+\.p2align|\s+\.loc|\.LF[BE]|\.LVL|\s+\# =>This|\s+\# kill)/ && !$$badsection' $(1)
 else
 cleanasm = :
 endif
@@ -162,6 +170,10 @@ flagged_compile = @ARGS=$$(grep '^//!' $< | sed 's/.*!//$(patsubst %,;s/ % */ /,
 	  $(call xrun,$(CXX) $(3) $$ARGS -o $(2) $(1),COMPILE $$ARGS $(1) -o $(2))
 flagged_compile_S = $(call flagged_compile,$(1),$(2),$(filter-out -g,$(3) -S)) && { $(call cleanasm,$(2)); }
 flagged_compile_c = $(call flagged_compile,$(1),$(2),$(3) -c)
+
+buildasm:
+	rm -f $(BUILDABLEASM)
+	$(MAKE) $(BUILDABLEASM)
 
 
 PERCENT := %
@@ -184,5 +196,5 @@ always:
 clean-hook:
 	@:
 
-.PHONY: always clean-hook
+.PHONY: always buildasm clean-hook
 .PRECIOUS: %.o

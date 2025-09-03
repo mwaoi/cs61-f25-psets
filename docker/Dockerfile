@@ -96,11 +96,18 @@ RUN useradd -m -s /bin/bash -u "${UID}" cs61-user &&\
  echo "cs61-user ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/cs61-init
 
 # create binary reporting version of dockerfile
-RUN (echo '#\!/bin/sh'; echo 'echo 21') > /usr/bin/cs61-docker-version; chmod ugo+rx,u+w,go-w /usr/bin/cs61-docker-version
+RUN (echo '#\!/bin/sh'; echo 'echo 22') > /usr/bin/cs61-docker-version; chmod ugo+rx,u+w,go-w /usr/bin/cs61-docker-version
 
 # git build arguments
 ARG USER=CS61\ User
 ARG EMAIL=nobody@example.com
+
+# ensure /usr/bin/c++, /usr/bin/g++, /usr/bin/clang++
+RUN test -z "`which c++`" && ln -s g++-14 /usr/bin/c++;\
+ test -z "`which g++`" && ln -s g++-14 /usr/bin/g++;\
+ test -z "`which clang`" && ln -s clang-19 /usr/bin/clang;\
+ test -z "`which clang++`" && ln -s clang++-19 /usr/bin/clang++;\
+ test -z "`which lldb`" && ln -s lldb-19 /usr/bin/lldb
 
 # configure your environment
 USER cs61-user
