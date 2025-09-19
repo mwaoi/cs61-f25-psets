@@ -3,8 +3,7 @@ Author and collaborators
 
 Student
 -------
-(Your name.)
-
+Micahel Lin
 
 Collaborators
 -------------
